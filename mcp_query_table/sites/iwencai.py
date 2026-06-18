@@ -44,6 +44,8 @@ def convert_type(type):
         return float
     if type == 'STR':
         return str
+    if type == 'DATE':
+        return str
     if type == 'INT':  # TODO 好像未出现过
         return int
     return type
@@ -54,18 +56,22 @@ class Pagination:
         self.datas = {}
         self.limit = 100
         self.page = 1
-        self.row_count = 1024
+        self.row_count = 0
         self.columns = []
 
     def reset(self):
         self.datas = {}
+        self.limit = 100
+        self.page = 1
+        self.row_count = 0
+        self.columns = []
 
     def update(self, datas, columns, page, limit, row_count):
         self.datas[page] = datas
         self.columns = columns
-        self.limit = limit
-        self.page = page
-        self.row_count = row_count
+        self.limit = int(limit)
+        self.page = int(page)
+        self.row_count = int(row_count)
 
     def has_next(self, max_page):
         c1 = self.page * self.limit < self.row_count
@@ -77,7 +83,7 @@ class Pagination:
 
     def get_list(self):
         datas = []
-        for k, v in self.datas.items():
+        for k, v in sorted(self.datas.items()):
             datas.extend(v)
         return datas
 
@@ -151,19 +157,53 @@ async def on_response(response):
 
 async def switch_page_size(page: Page, page_size: int = 100) -> bool:
     target_text = f"显示{page_size}条/页"
-    current = page.locator(".drop-down-box span").first
-    try:
-        current_text = (await current.inner_text()).strip()
-    except Exception:
-        return False
+    current_candidates = [
+        page.locator(".drop-down-box span").first,
+        page.locator(".pcwencai-pagination-wrap .drop-down-box span").first,
+    ]
+    current_text = None
+    for current in current_candidates:
+        try:
+            current_text = (await current.inner_text()).strip()
+            if current_text:
+                break
+        except Exception:
+            continue
 
-    if target_text in current_text:
+    if not current_text or target_text in current_text:
         return False
 
     # 新版分页控件位于结果表底部，切换每页条数会触发 getDataList 刷新。
+    dropdown_candidates = [
+        page.locator(".drop-down-box").first,
+        page.locator(".pcwencai-pagination-wrap .drop-down-box").first,
+    ]
+    option_candidates = [
+        page.get_by_text(target_text, exact=True),
+        page.locator(f"text={target_text}").first,
+    ]
     async with page.expect_response(lambda response: response.url.startswith(_PAGE2_)) as response_info:
-        await page.locator(".drop-down-box").first.click()
-        await page.get_by_text(target_text, exact=True).click()
+        clicked = False
+        for dropdown in dropdown_candidates:
+            try:
+                await dropdown.click()
+                clicked = True
+                break
+            except Exception:
+                continue
+        if not clicked:
+            return False
+
+        chosen = False
+        for option in option_candidates:
+            try:
+                await option.click()
+                chosen = True
+                break
+            except Exception:
+                continue
+        if not chosen:
+            return False
     await on_response(await response_info.value)
     return True
 
@@ -194,10 +234,24 @@ async def query(page: Page,
     except Exception as exc:
         logger.warning("切换每页 100 条失败: {}", exc)
 
+    next_link_candidates = [
+        page.locator(".next-link").first,
+        page.locator(".pcwencai-pagination-wrap .next-link").first,
+        page.get_by_text("下页", exact=True),
+    ]
     while P.has_next(max_page):
         logger.info("当前页为:{}, 点击`下页`", P.current())
         async with page.expect_response(lambda response: response.url.startswith(_PAGE2_)) as response_info:
-            await page.locator(".next-link").click()
+            clicked = False
+            for next_link in next_link_candidates:
+                try:
+                    await next_link.click()
+                    clicked = True
+                    break
+                except Exception:
+                    continue
+            if not clicked:
+                raise RuntimeError("未找到问财下一页按钮")
         await on_response(await response_info.value)
 
     return P.get_dataframe(rename)
