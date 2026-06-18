@@ -1,0 +1,7 @@
+pandas
+loguru
+psutil
+playwright
+playwright-stealth>=2.0.0
+fastmcp
+tabulate

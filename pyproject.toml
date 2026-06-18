@@ -1,0 +1,38 @@
+[project]
+name = "mcp_query_table"
+authors = [
+    { name = "wukan", email = "wu-kan@163.com" },
+]
+description = "query table from website, support MCP"
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["playwright", "mcp", "table", "iwencai", "tdx", "eastmoney"]
+license = { file = "LICENSE" }
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python"
+]
+dependencies = [
+    "pandas",
+    "loguru",
+    "psutil",
+    "playwright",
+    "playwright-stealth>=2.0.0", # https://github.com/Mattwmaster58/playwright_stealth
+    "fastmcp",
+    "tabulate"
+]
+dynamic = ["version"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "mcp_query_table/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["mcp_query_table"]
+include-package-data = true
+
+[tool.hatch.build.targets.sdist]
+include = ["mcp_query_table*"]
