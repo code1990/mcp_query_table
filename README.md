@@ -166,6 +166,36 @@ python3 -m mcp_query_table \
 - [FAQ](docs/FAQ.md)
 - [运维手册](docs/OPERATIONS.md)
 
+## 单文件版 `i问财`
+
+仓库根目录下提供了 `iwencai_single.py`，用于在不启动 `MCP` 服务的情况下，直接查询新版 `i问财` 选股页并导出结果。
+
+安装依赖：
+
+```commandline
+pip install -r iwencai_single_requirements.txt
+playwright install chromium
+```
+
+直接运行：
+
+```commandline
+python iwencai_single.py
+```
+
+脚本默认会：
+
+1. 打开 `i问财` 选股结果页
+2. 自动切换到 `100条/页`
+3. 按分页抓取数据
+4. 导出到当前目录下的 `行业概念_single.xlsx`
+
+如需复用，可直接调用：
+
+```python
+from iwencai_single import QueryType, query_iwencai
+```
+
 ## 参考
 
 - [Streamlit 说明](streamlit/README.md)
