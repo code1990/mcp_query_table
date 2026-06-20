@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import time
 from enum import Enum
 from pathlib import Path
 
@@ -182,8 +183,17 @@ async def query_iwencai(
     max_page: int = 56,
     rename: bool = True,
     per_page: int = 100,
-    headless: bool = False,
+    headless: bool = True,
 ) -> pd.DataFrame:
+    start_time = time.perf_counter()
+    logger.info(
+        "start query=%s type=%s max_page=%s per_page=%s headless=%s",
+        query_text,
+        query_type.value,
+        max_page,
+        per_page,
+        headless,
+    )
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=headless)
         context = await browser.new_context(viewport={"width": 1280, "height": 800})
@@ -196,17 +206,21 @@ async def query_iwencai(
         await page.route(re.compile(r".*\\.(?:jpg|jpeg|png|gif|webp)(?:$|\\?)"), lambda route: route.abort())
 
         P.reset()
+        logger.info("loading iwencai screener page")
         async with page.expect_response(lambda resp: resp.url.startswith(PAGE1_URL)) as resp_info:
             await page.goto(
                 f"https://www.iwencai.com/screener/result?w={query_text}&querytype={query_type.value}",
                 wait_until="load",
             )
         await on_response(await resp_info.value)
+        logger.info("loaded first page rows=%s limit=%s total=%s", len(P.datas.get(1, [])), P.limit, P.row_count)
 
         try:
             changed = await switch_page_size(page, per_page)
             if changed:
                 logger.info("switched page size to %s", per_page)
+            else:
+                logger.info("page size already %s or switch skipped", per_page)
         except Exception as exc:
             logger.warning("switch page size failed: %s", exc)
 
@@ -231,6 +245,13 @@ async def query_iwencai(
             await on_response(await resp_info.value)
 
         df = P.get_dataframe(rename)
+        logger.info(
+            "finished rows=%s cols=%s pages=%s elapsed=%.2fs",
+            len(df),
+            len(df.columns),
+            len(P.datas),
+            time.perf_counter() - start_time,
+        )
         await context.close()
         await browser.close()
         return df
@@ -238,9 +259,11 @@ async def query_iwencai(
 
 async def _main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    start_time = time.perf_counter()
     out = Path("行业概念_single.xlsx")
-    df = await query_iwencai("行业概念", QueryType.CNStock, max_page=56, rename=True, per_page=100, headless=False)
+    df = await query_iwencai("行业概念", QueryType.CNStock, max_page=56, rename=True, per_page=100)
     df.to_excel(out, index=False)
+    logger.info("saved xlsx=%s elapsed=%.2fs", out.resolve(), time.perf_counter() - start_time)
     print(out.resolve())
     print(df.shape)
     print(df["股票代码"].nunique())
