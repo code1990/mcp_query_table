@@ -175,5 +175,6 @@ cython_debug/
 
 runtime/
 playwright-report/
+excel/
 .DS_Store
 *.xlsx
