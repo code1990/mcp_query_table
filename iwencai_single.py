@@ -13,6 +13,7 @@ Example:
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 import re
@@ -44,6 +45,10 @@ class QueryType(Enum):
 
 PAGE1_URL = "https://www.iwencai.com/unifiedwap/unified-wap/v2/result/get-robot-data"
 PAGE2_URL = "https://www.iwencai.com/gateway/urp/v7/landing/getDataList"
+DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent / "excel"
+DEFAULT_QUERY = "行业概念"
+DEFAULT_MAX_PAGE = 56
+DEFAULT_PAGE_SIZE = 100
 
 
 def convert_type(type_name: str):
@@ -257,11 +262,41 @@ async def query_iwencai(
         return df
 
 
+def build_output_path(output_dir: str | Path, query_text: str, output_name: str | None = None) -> Path:
+    directory = Path(output_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    if output_name:
+        return directory / output_name
+    safe_query = query_text.replace("/", "_").replace("\\", "_").strip() or "iwencai"
+    return directory / f"{safe_query}_single.xlsx"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="iWenCai single query exporter")
+    parser.add_argument("--query", default=DEFAULT_QUERY, help="iwencai query text")
+    parser.add_argument("--type", default="CNStock", help="QueryType name, like CNStock / ETF")
+    parser.add_argument("--max-page", type=int, default=DEFAULT_MAX_PAGE)
+    parser.add_argument("--page-size", type=int, default=DEFAULT_PAGE_SIZE)
+    parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
+    parser.add_argument("--output-name", default=None)
+    return parser.parse_args()
+
+
 async def _main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    args = parse_args()
     start_time = time.perf_counter()
-    out = Path("行业概念_single.xlsx")
-    df = await query_iwencai("行业概念", QueryType.CNStock, max_page=56, rename=True, per_page=100)
+    query_type = QueryType[args.type] if args.type in QueryType.__members__ else QueryType.CNStock
+    out = build_output_path(args.output_dir, args.query, args.output_name)
+    df = await query_iwencai(
+        args.query,
+        query_type,
+        max_page=args.max_page,
+        rename=True,
+        per_page=args.page_size,
+        headless=args.headless,
+    )
     df.to_excel(out, index=False)
     logger.info("saved xlsx=%s elapsed=%.2fs", out.resolve(), time.perf_counter() - start_time)
     print(out.resolve())
