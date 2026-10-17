@@ -157,6 +157,41 @@ python3 -m mcp_query_table \
 - 无头模式下建议显式指定 `user_data_dir`
 - 各站点表结构不同，同一查询在不同站点得到的结果可能不同
 
+## i问财新版抓取与 RE 记录（2026-10）
+
+实现位于 `mcp_query_table/sites/iwencai.py`。页面已有两套数据链路，代码会自动分支；旧链路不要删除。
+
+| 场景 | 首屏信号 | 翻页信号 | 解析方式 |
+| --- | --- | --- | --- |
+| 旧版 | `/unifiedwap/unified-wap/v2/result/get-robot-data` | `/gateway/urp/v7/landing/getDataList` | 直接解析 JSON 中的 `datas`、`columns` 与 `meta` |
+| 当前新版 | `/gateway/aime/stream-query`（SSE） | `/gateway/render/encrypt/getData` | 浏览器完成解密和渲染后，从结果表读取 |
+
+新版不要把 `stream-query` 当作普通 JSON；首屏表格配置、总数和首批数据在 SSE 的 `data:` 事件里。翻页接口的请求会携带动态登录态、令牌及加密 SQL，响应由页面处理；当前实现不重放这些敏感、易失效的参数，而是让已登录的 Playwright 页面完成请求。
+
+### 当前新版流程
+
+1. 使用已登录浏览器打开 `/screener/result?w=<问句>&querytype=stock`，宽度保持大于 768。
+2. 等待 `.pcwencai-pagination-wrap` 可见，以 `/gateway/aime/stream-query` 判定新版链路。
+3. 选择“显示100条/页”，并等待下拉框文字确实更新，避免网络响应先到而 DOM 仍是 50 条时漏掉首屏数据。
+4. 点击“股票代码”表头两次。当前页面第一次为降序、第二次为升序；升序状态的图标为 `i.thead-order.sort-rise`，首两条应为 `000001`、`000002`。
+5. 每次点击“下页”等待 `/gateway/render/encrypt/getData`，再读取 DOM 中单元格数最多的 `table`（另一张是冻结列副本）。跳过序号和勾选框两列，将其余单元格按表头组成 DataFrame。
+6. 当 `.next-link` 带有 `disabled` 时停止，或达到调用者的 `max_page`。
+
+2026-10-17 对“行业概念”的验收结果为 5,582 行、100 条/页共 56 页；行情和成分会变化，后续应以页面的实时总数为准。
+
+### 下次接口改版时的检查顺序
+
+1. 先用真实、已授权的登录页面捕获首屏和一次翻页的 URL、状态码、内容类型及 JSON/SSE 的顶层结构；不要记录 Cookie、`hexin-v`、token、完整请求体或完整响应体。
+2. 若新版 SSE、分页 URL 或表格选择器改变，先确认页面是否仍能渲染出结果；优先修正浏览器驱动的流程，而不是复制临时的加密参数。
+3. 验证页大小切换、代码升序、首页/末页、总行数和第一页代码。最小回归测试：
+
+```bash
+cd /root/project/mcp_query_table
+PYTHONPATH=. python -m unittest tests.test_iwencai -v
+```
+
+登录态仅存放在本机私有浏览器配置或受限权限的本地文件，绝不提交到 Git、README、测试 fixture 或日志。
+
 ## 文档
 
 - [架构文档](docs/ARCHITECTURE.md)

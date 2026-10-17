@@ -18,6 +18,9 @@ from mcp_query_table.enums import QueryType
 _PAGE1_ = 'https://www.iwencai.com/unifiedwap/unified-wap/v2/result/get-robot-data'
 # 翻页
 _PAGE2_ = 'https://www.iwencai.com/gateway/urp/v7/landing/getDataList'
+# 2026-10 页面通过 SSE 首次返回结果，翻页数据在浏览器内解密后渲染。
+_NEW_PAGE1_ = 'https://www.iwencai.com/gateway/aime/stream-query'
+_NEW_PAGE2_ = 'https://www.iwencai.com/gateway/render/encrypt/getData'
 
 _querytype_ = {
     QueryType.CNStock: 'stock',
@@ -155,6 +158,67 @@ async def on_response(response):
         P.update(*getDataList(await response.json()))
 
 
+def get_new_dataframe(headers, rows):
+    return pd.DataFrame([dict(zip(headers, row)) for row in rows])
+
+
+async def get_new_table(page: Page) -> pd.DataFrame:
+    headers, rows = await page.locator('body').evaluate("""() => {
+        const headerNodes = [...document.querySelectorAll('.iwc-table-header')];
+        const left = (headerNodes.find(node => node.innerText.includes('股票代码'))?.innerText || '')
+            .split('\\n').map(text => text.trim()).filter(text => text && text !== '序号');
+        const right = (document.querySelector('.table-right-thead')?.innerText || '')
+            .split('\\n').map(text => text.trim()).filter(Boolean);
+        const table = [...document.querySelectorAll('table')]
+            .sort((a, b) => b.querySelectorAll('td').length - a.querySelectorAll('td').length)[0];
+        const rows = table ? [...table.querySelectorAll('tr')].map(row =>
+            [...row.querySelectorAll('td')].slice(2).map(cell => cell.innerText.trim())) : [];
+        return [[...left, ...right], rows];
+    }""")
+    if not headers or not rows or any(len(row) != len(headers) for row in rows):
+        raise RuntimeError('新版问财结果表结构不完整')
+    return get_new_dataframe(headers, rows)
+
+
+async def switch_new_page_size(page: Page, page_size: int = 100) -> None:
+    target_text = f'显示{page_size}条/页'
+    if target_text in (await page.locator('.drop-down-box span').first.inner_text()):
+        return
+    async with page.expect_response(lambda response: response.url.startswith(_NEW_PAGE2_)):
+        await page.locator('.drop-down-box').first.click()
+        await page.get_by_text(target_text, exact=True).click()
+    await page.wait_for_function(
+        "text => document.querySelector('.drop-down-box span')?.innerText.includes(text)", arg=target_text)
+
+
+async def sort_new_by_code(page: Page) -> None:
+    header = page.locator('.iwc-table-header').filter(has_text='股票代码').locator('li').nth(2)
+    # 当前页面首次点击为降序，第二次为升序。
+    for _ in range(2):
+        async with page.expect_response(lambda response: response.url.startswith(_NEW_PAGE2_)):
+            await header.click()
+    await page.wait_for_function("""() => {
+        const table = [...document.querySelectorAll('table')]
+            .sort((a, b) => b.querySelectorAll('td').length - a.querySelectorAll('td').length)[0];
+        return table?.querySelector('tr td:nth-child(3)')?.innerText.trim() === '000001';
+    }""")
+
+
+async def query_new(page: Page, max_page: int) -> pd.DataFrame:
+    await page.locator('.pcwencai-pagination-wrap').wait_for(state='visible')
+    await switch_new_page_size(page)
+    await sort_new_by_code(page)
+    frames = []
+    for _ in range(max_page):
+        frames.append(await get_new_table(page))
+        next_link = page.locator('.pcwencai-pagination-wrap .next-link').first
+        if 'disabled' in (await next_link.get_attribute('class') or ''):
+            break
+        async with page.expect_response(lambda response: response.url.startswith(_NEW_PAGE2_)):
+            await next_link.click()
+    return pd.concat(frames, ignore_index=True)
+
+
 async def switch_page_size(page: Page, page_size: int = 100) -> bool:
     target_text = f"显示{page_size}条/页"
     current_candidates = [
@@ -222,9 +286,13 @@ async def query(page: Page,
     # page.viewport_size # 取出来是None
     # 宽度<=768会认为是手机,>768是PC
     await page.set_viewport_size({"width": 1280, "height": 800})
-    async with page.expect_response(lambda response: response.url.startswith(_PAGE1_)) as response_info:
+    async with page.expect_response(
+            lambda response: response.url.startswith(_PAGE1_) or response.url.startswith(_NEW_PAGE1_)) as response_info:
         await page.goto(f"https://www.iwencai.com/screener/result?w={w}&querytype={querytype}", wait_until="load")
-    await on_response(await response_info.value)
+    response = await response_info.value
+    if response.url.startswith(_NEW_PAGE1_):
+        return await query_new(page, max_page)
+    await on_response(response)
 
     # 新版问财分页控件支持 10/20/50/100 条每页，优先切到 100 减少翻页次数。
     try:

@@ -152,6 +152,13 @@ class IwencaiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(list(df["A"]), [1, 2])
         self.assertEqual(df["A"].dtype.kind, "i")
 
+    def test_new_table_dataframe(self):
+        df = iwencai.get_new_dataframe(["股票代码", "股票简称"], [["000001", "平安银行"], ["000002", "万科A"]])
+        self.assertEqual(df.to_dict("records"), [
+            {"股票代码": "000001", "股票简称": "平安银行"},
+            {"股票代码": "000002", "股票简称": "万科A"},
+        ])
+
     async def test_switch_page_size_noop_when_already_target(self):
         page = FakePage(current_text="显示100条/页")
         changed = await iwencai.switch_page_size(page, 100)
