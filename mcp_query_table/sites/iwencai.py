@@ -24,19 +24,32 @@ _NEW_PAGE2_ = 'https://www.iwencai.com/gateway/render/encrypt/getData'
 
 _querytype_ = {
     QueryType.CNStock: 'stock',
+    QueryType.AShareIndex: 'azhishu',
     QueryType.Index: 'zhishu',
+    QueryType.ListedETF: 'listedfund',
     QueryType.Fund: 'fund',
+    QueryType.FundProduct: 'fund',
+    QueryType.FundManager: 'fundmanager',
+    QueryType.FundCompany: 'fundcompany',
     QueryType.HKStock: 'hkstock',
+    QueryType.HKIndex: 'hkzhishu',
     QueryType.USStock: 'usstock',
-    '新三板': 'threeboard',
+    QueryType.USIndex: 'uszhishu',
+    QueryType.Futures: 'futures',
+    QueryType.ThreeBoard: 'threeboard',
     QueryType.ConBond: 'conbond',
+    QueryType.Insurance: 'insurance',
+    QueryType.WealthManagement: 'lccp',
+    QueryType.Forex: 'foreign_exchange',
+    QueryType.Macro: 'macro',
+    QueryType.ETF: 'listedfund',
+    # 保留旧调用方传入中文字符串的兼容入口。
+    '新三板': 'threeboard',
     '保险': 'insurance',
     '期货': 'futures',
     '理财': 'lccp',
     '外汇': 'foreign_exchange',
     '宏观': 'macro',
-    #
-    QueryType.ETF: 'fund',  # 查ETF定位到基金
 }
 
 
@@ -165,10 +178,11 @@ def get_new_dataframe(headers, rows):
 async def get_new_table(page: Page) -> pd.DataFrame:
     headers, rows = await page.locator('body').evaluate("""() => {
         const headerNodes = [...document.querySelectorAll('.iwc-table-header')];
-        const left = (headerNodes.find(node => node.innerText.includes('股票代码'))?.innerText || '')
+        const left = (headerNodes.find(node => node.innerText.includes('序号'))?.innerText || '')
             .split('\\n').map(text => text.trim()).filter(text => text && text !== '序号');
         const right = (document.querySelector('.table-right-thead')?.innerText || '')
-            .split('\\n').map(text => text.trim()).filter(Boolean);
+            .split('\\n').map(text => text.trim())
+            .filter(text => text && !/^\\d{4}\\.\\d{2}\\.\\d{2}-\\d{4}\\.\\d{2}\\.\\d{2}$/.test(text));
         const table = [...document.querySelectorAll('table')]
             .sort((a, b) => b.querySelectorAll('td').length - a.querySelectorAll('td').length)[0];
         const rows = table ? [...table.querySelectorAll('tr')].map(row =>
@@ -191,31 +205,54 @@ async def switch_new_page_size(page: Page, page_size: int = 100) -> None:
         "text => document.querySelector('.drop-down-box span')?.innerText.includes(text)", arg=target_text)
 
 
-async def sort_new_by_code(page: Page) -> None:
-    header = page.locator('.iwc-table-header').filter(has_text='股票代码').locator('li').nth(2)
-    # 当前页面首次点击为降序，第二次为升序。
-    for _ in range(2):
-        async with page.expect_response(lambda response: response.url.startswith(_NEW_PAGE2_)):
-            await header.click()
-    await page.wait_for_function("""() => {
+async def sort_new_by_primary(page: Page) -> None:
+    row_count = await page.locator('body').evaluate("""() => {
         const table = [...document.querySelectorAll('table')]
             .sort((a, b) => b.querySelectorAll('td').length - a.querySelectorAll('td').length)[0];
-        return table?.querySelector('tr td:nth-child(3)')?.innerText.trim() === '000001';
+        return table?.querySelectorAll('tr').length || 0;
     }""")
+    if row_count < 2:
+        return
+    header = page.locator('.iwc-table-header').filter(has_text='序号').locator('li').nth(2)
+    # 当前页面首次点击为降序，第二次为升序。
+    for _ in range(2):
+        first_code = await page.locator('body').evaluate("""() => {
+            const table = [...document.querySelectorAll('table')]
+                .sort((a, b) => b.querySelectorAll('td').length - a.querySelectorAll('td').length)[0];
+            return table?.querySelector('tr td:nth-child(3)')?.innerText.trim();
+        }""")
+        async with page.expect_response(lambda response: response.url.startswith(_NEW_PAGE2_)):
+            await header.click()
+        await wait_new_page(page, first_code)
+
+
+async def wait_new_page(page: Page, first_code: str) -> None:
+    await page.wait_for_function("""code => {
+        const table = [...document.querySelectorAll('table')]
+            .sort((a, b) => b.querySelectorAll('td').length - a.querySelectorAll('td').length)[0];
+        const nextCode = table?.querySelector('tr td:nth-child(3)')?.innerText.trim();
+        return Boolean(nextCode) && nextCode !== code;
+    }""", arg=first_code)
 
 
 async def query_new(page: Page, max_page: int) -> pd.DataFrame:
-    await page.locator('.pcwencai-pagination-wrap').wait_for(state='visible')
-    await switch_new_page_size(page)
-    await sort_new_by_code(page)
+    pagination = page.locator('.pcwencai-pagination-wrap')
+    has_pagination = await pagination.is_visible()
+    if has_pagination:
+        await switch_new_page_size(page)
+    await sort_new_by_primary(page)
     frames = []
     for _ in range(max_page):
-        frames.append(await get_new_table(page))
+        frame = await get_new_table(page)
+        frames.append(frame)
+        if not has_pagination:
+            break
         next_link = page.locator('.pcwencai-pagination-wrap .next-link').first
         if 'disabled' in (await next_link.get_attribute('class') or ''):
             break
         async with page.expect_response(lambda response: response.url.startswith(_NEW_PAGE2_)):
             await next_link.click()
+        await wait_new_page(page, str(frame.iloc[0, 0]))
     return pd.concat(frames, ignore_index=True)
 
 

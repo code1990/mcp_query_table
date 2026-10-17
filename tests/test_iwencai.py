@@ -1,5 +1,6 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from mcp_query_table.enums import QueryType
 from mcp_query_table.sites import iwencai
@@ -93,6 +94,14 @@ class FakePage:
         return FakeExpectResponse(self._response)
 
 
+class HiddenPaginationPage:
+    def locator(self, selector):
+        return self
+
+    async def is_visible(self):
+        return False
+
+
 class IwencaiTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         iwencai.P.reset()
@@ -102,6 +111,27 @@ class IwencaiTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(iwencai.convert_type("DOUBLE"), float)
         self.assertIs(iwencai.convert_type("STR"), str)
         self.assertIs(iwencai.convert_type("DATE"), str)
+
+    def test_futures_query_type(self):
+        self.assertEqual(iwencai._querytype_[QueryType.Futures], "futures")
+
+    def test_scope_menu_query_types(self):
+        expected = {
+            QueryType.CNStock: "stock",
+            QueryType.AShareIndex: "azhishu",
+            QueryType.ListedETF: "listedfund",
+            QueryType.FundManager: "fundmanager",
+            QueryType.FundCompany: "fundcompany",
+            QueryType.HKIndex: "hkzhishu",
+            QueryType.USIndex: "uszhishu",
+            QueryType.ThreeBoard: "threeboard",
+            QueryType.Insurance: "insurance",
+            QueryType.WealthManagement: "lccp",
+            QueryType.Forex: "foreign_exchange",
+            QueryType.Macro: "macro",
+        }
+        for query_type, querytype in expected.items():
+            self.assertEqual(iwencai._querytype_[query_type], querytype)
 
     def test_parse_robot_and_datalist(self):
         robot = {
@@ -158,6 +188,17 @@ class IwencaiTests(unittest.IsolatedAsyncioTestCase):
             {"股票代码": "000001", "股票简称": "平安银行"},
             {"股票代码": "000002", "股票简称": "万科A"},
         ])
+
+    async def test_query_new_reads_single_page_when_pagination_is_hidden(self):
+        frame = iwencai.pd.DataFrame([{"股票代码": "000001"}])
+        with patch.object(iwencai, "sort_new_by_primary", new_callable=AsyncMock) as sort, \
+             patch.object(iwencai, "switch_new_page_size", new_callable=AsyncMock) as switch, \
+             patch.object(iwencai, "get_new_table", new_callable=AsyncMock, return_value=frame):
+            result = await iwencai.query_new(HiddenPaginationPage(), max_page=10)
+
+        self.assertEqual(result.to_dict("records"), [{"股票代码": "000001"}])
+        sort.assert_awaited_once()
+        switch.assert_not_awaited()
 
     async def test_switch_page_size_noop_when_already_target(self):
         page = FakePage(current_text="显示100条/页")
@@ -222,6 +263,38 @@ class IwencaiTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIn("https://www.iwencai.com/screener/result?w=测试条件&querytype=stock", page.goto_url)
         self.assertTrue(df.empty)
+
+    async def test_query_applies_each_scope_querytype(self):
+        payload = {
+            "data": {
+                "answer": [
+                    {
+                        "txt": [
+                            {
+                                "content": {
+                                    "components": [
+                                        {
+                                            "data": {
+                                                "datas": [],
+                                                "columns": [],
+                                                "meta": {"page": 1, "limit": 100, "extra": {"row_count": 0}},
+                                            }
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+        for query_type, querytype in iwencai._querytype_.items():
+            if not isinstance(query_type, QueryType):
+                continue
+            page = FakePage(current_text="显示100条/页", response_url=iwencai._PAGE1_)
+            page._response = FakeResponse(iwencai._PAGE1_, payload)
+            await iwencai.query(page, w="测试条件", type_=query_type, max_page=1, rename=False)
+            self.assertIn(f"querytype={querytype}", page.goto_url)
 
 
 if __name__ == "__main__":

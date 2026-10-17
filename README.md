@@ -168,12 +168,36 @@ python3 -m mcp_query_table \
 
 新版不要把 `stream-query` 当作普通 JSON；首屏表格配置、总数和首批数据在 SSE 的 `data:` 事件里。翻页接口的请求会携带动态登录态、令牌及加密 SQL，响应由页面处理；当前实现不重放这些敏感、易失效的参数，而是让已登录的 Playwright 页面完成请求。
 
+### 搜索范围枚举
+
+`query(..., query_type=QueryType.<名称>, site=Site.THS)` 会将枚举映射为对应的页面 `querytype`，因此选择下列类型会应用到打开的问财页面。2026-10-17 已通过页面范围下拉菜单逐项确认映射；这不等于每一种结果表都已完成数据解析验证。
+
+| `QueryType` | 中文枚举值 | 页面 `querytype` | 解析状态 |
+| --- | --- | --- | --- |
+| `CNStock` | A股 | `stock` | 已验证 |
+| `AShareIndex` | A股指数 | `azhishu` | 层级成分表，待专用解析 |
+| `ListedETF` | 场内ETF | `listedfund` | 已验证 |
+| `FundProduct` | 基金产品 | `fund` | 已验证 |
+| `FundManager` | 基金经理 | `fundmanager` | 仅范围映射已验证 |
+| `FundCompany` | 基金公司 | `fundcompany` | 仅范围映射已验证 |
+| `HKStock` / `HKIndex` | 港股 / 港股指数 | `hkstock` / `hkzhishu` | 已验证 |
+| `USStock` / `USIndex` | 美股 / 美股指数 | `usstock` / `uszhishu` | 已验证 |
+| `ThreeBoard` | 新三板 | `threeboard` | 仅范围映射已验证 |
+| `ConBond` | 可转债 | `conbond` | 已验证 |
+| `Insurance` | 保险 | `insurance` | 仅范围映射已验证 |
+| `Futures` | 期货 | `futures` | 已验证 |
+| `WealthManagement` | 理财 | `lccp` | 仅范围映射已验证 |
+| `Forex` | 外汇 | `foreign_exchange` | 仅范围映射已验证 |
+| `Macro` | 宏观 | `macro` | 仅范围映射已验证 |
+
+兼容别名：现有 `Fund` 仍映射 `fund`，`ETF` 映射 `listedfund`；旧 `Index` 保持 `zhishu`，新页面的“A股指数”请使用 `AShareIndex`。未验证类别可以正常打开相应范围，但若页面返回层级表、卡片或非代码列，`get_new_table()` 会拒绝错误结构，而不会伪造 DataFrame。
+
 ### 当前新版流程
 
-1. 使用已登录浏览器打开 `/screener/result?w=<问句>&querytype=stock`，宽度保持大于 768。
-2. 等待 `.pcwencai-pagination-wrap` 可见，以 `/gateway/aime/stream-query` 判定新版链路。
+1. 使用已登录浏览器打开 `/screener/result?w=<问句>&querytype=<范围>`，宽度保持大于 768。
+2. 以 `/gateway/aime/stream-query` 判定新版链路；不足一页时分页容器会隐藏，直接读取首屏。
 3. 选择“显示100条/页”，并等待下拉框文字确实更新，避免网络响应先到而 DOM 仍是 50 条时漏掉首屏数据。
-4. 点击“股票代码”表头两次。当前页面第一次为降序、第二次为升序；升序状态的图标为 `i.thead-order.sort-rise`，首两条应为 `000001`、`000002`。
+4. 多行结果点击主冻结列（含“序号”的列表头）两次，等待首字段实际更新后再继续；单行结果不排序，不写死股票代码。
 5. 每次点击“下页”等待 `/gateway/render/encrypt/getData`，再读取 DOM 中单元格数最多的 `table`（另一张是冻结列副本）。跳过序号和勾选框两列，将其余单元格按表头组成 DataFrame。
 6. 当 `.next-link` 带有 `disabled` 时停止，或达到调用者的 `max_page`。
 
