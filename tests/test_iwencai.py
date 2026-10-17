@@ -102,6 +102,18 @@ class HiddenPaginationPage:
         return False
 
 
+class RenderedTablePage:
+    def __init__(self, headers, rows):
+        self.headers = headers
+        self.rows = rows
+
+    def locator(self, selector):
+        return self
+
+    async def evaluate(self, script):
+        return self.headers, self.rows
+
+
 class IwencaiTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         iwencai.P.reset()
@@ -188,6 +200,20 @@ class IwencaiTests(unittest.IsolatedAsyncioTestCase):
             {"股票代码": "000001", "股票简称": "平安银行"},
             {"股票代码": "000002", "股票简称": "万科A"},
         ])
+
+    async def test_get_new_table_parses_index_component_rows(self):
+        page = RenderedTablePage(
+            ["指数代码", "指数简称", "成分代码", "成分简称", "交易日期"],
+            [["850552.SL", "铜", "600711.SH", "盛屯矿业", "20261017"]],
+        )
+        df = await iwencai.get_new_table(page)
+        self.assertEqual(df.to_dict("records"), [{
+            "指数代码": "850552.SL",
+            "指数简称": "铜",
+            "成分代码": "600711.SH",
+            "成分简称": "盛屯矿业",
+            "交易日期": "20261017",
+        }])
 
     async def test_query_new_reads_single_page_when_pagination_is_hidden(self):
         frame = iwencai.pd.DataFrame([{"股票代码": "000001"}])

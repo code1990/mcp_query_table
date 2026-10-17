@@ -175,7 +175,7 @@ python3 -m mcp_query_table \
 | `QueryType` | 中文枚举值 | 页面 `querytype` | 解析状态 |
 | --- | --- | --- | --- |
 | `CNStock` | A股 | `stock` | 已验证 |
-| `AShareIndex` | A股指数 | `azhishu` | 层级成分表，待专用解析 |
+| `AShareIndex` | A股指数 | `azhishu` | 已验证（指数-成分关联表） |
 | `ListedETF` | 场内ETF | `listedfund` | 已验证 |
 | `FundProduct` | 基金产品 | `fund` | 已验证 |
 | `FundManager` | 基金经理 | `fundmanager` | 仅范围映射已验证 |
