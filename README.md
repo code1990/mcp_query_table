@@ -192,6 +192,25 @@ PYTHONPATH=. python -m unittest tests.test_iwencai -v
 
 登录态仅存放在本机私有浏览器配置或受限权限的本地文件，绝不提交到 Git、README、测试 fixture 或日志。
 
+### REA/Chrome DevTools 受控验证（2026-10-17）
+
+本项目的正确抓取边界是“让已登录浏览器完成页面请求，再读取渲染后的表格”，而不是复刻 `stream-query` 或 `render/encrypt/getData` 的加密请求。REA 的受控浏览器回放确认：未登录的临时 profile 能加载“行业概念”页面，但不会出现结果表；因此登录态是运行前置条件。
+
+使用本机受限的登录 profile 验证主实现首屏时，`行业概念` 返回 100 行、8 列，且升序后的前两只代码为 `000001`、`000002`。完整抓取继续按上文的 100 条/页、代码升序、逐页 DOM 读取和末页 `disabled` 判断执行。
+
+建议：
+
+1. 把登录态保存在专用 `user_data_dir`，由人工完成登录；不要在生产脚本中读取或注入 cookie 文本。
+2. Chrome DevTools MCP 适合观察页面与排查改版，REA 适合保留最小的受控运行证据；两者都不应成为重放动态 token、`hexin-v` 或加密 SQL 的理由。
+3. `iwencai_single.py` 仍使用旧 JSON 接口，不能作为新版生产入口。需要独立脚本时，应复用 `mcp_query_table/sites/iwencai.py` 的浏览器渲染流程，或明确标记该脚本为旧版示例。
+
+最小验证命令：
+
+```bash
+cd /root/project/mcp_query_table
+PYTHONPATH=. python -m unittest tests.test_iwencai -v
+```
+
 ## 文档
 
 - [架构文档](docs/ARCHITECTURE.md)
